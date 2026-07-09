@@ -336,7 +336,7 @@ button.ghost{flex:0 0 52px}
   </div>
   <div class="cam-bar">
     <span id="cam-msg">バーコードを枠内にかざしてください</span>
-    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">o1</span>
+    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">o2</span>
     <button type="button" id="btn-cam-close">閉じる</button>
   </div>
 </div>
@@ -605,7 +605,7 @@ function decodeFrame(){
   }
 
   /* 生存確認カウンタ: 解析ループが回っていること・v4であることの目印 */
-  if(++frameCount % 8 === 0) camVer.textContent = "o1·" + frameCount;
+  if(++frameCount % 8 === 0) camVer.textContent = "o2·" + frameCount;
 }
 
 async function openCam(){
@@ -706,6 +706,7 @@ input.addEventListener("blur",  ()=> box.classList.remove("armed"));
 /* フォーカスが外れていてもリーダー入力を拾って戻す保険
    数量入力中はハードキー(外付けテンキー等)を数量にルーティング */
 document.addEventListener("keydown", e=>{
+  if(e.isComposing) return; // 日本語入力の変換中には一切干渉しない
   if(qtyOpen){
     if(e.key >= "0" && e.key <= "9"){ qtyKey(e.key); e.preventDefault(); }
     else if(e.key === "Backspace"){ qtyKey("B"); e.preventDefault(); }
@@ -713,6 +714,9 @@ document.addEventListener("keydown", e=>{
     else if(e.key === "Escape"){ closeQty(); e.preventDefault(); }
     return;
   }
+  /* 場所・担当など、別の入力欄に入力中はフォーカスを奪わない */
+  const t = e.target;
+  if(t !== input && t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   if(document.activeElement !== input && e.key.length === 1){ input.focus(); }
 });
 box.addEventListener("click", ()=> input.focus());

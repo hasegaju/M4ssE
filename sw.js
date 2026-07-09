@@ -1,6 +1,6 @@
 /* SCAN LOG demo — offline cache
    バージョンを上げると次回オンライン時にキャッシュが更新される */
-const VERSION = "scanops-v1";
+const VERSION = "scanops-v2";
 const ASSETS = [
   "./",
   "./index.html",
