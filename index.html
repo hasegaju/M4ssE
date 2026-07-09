@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>SCAN LOG — バーコード読取(実運用版)</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SCAN LOG">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<style>
+:root{
+  --ink:#1B2430;
+  --bg:#EDF0F3;
+  --surface:#FFFFFF;
+  --line:#D9DEE4;
+  --muted:#68737F;
+  --ok:#0A9B5B;
+  --ok-soft:#E2F5EC;
+  --laser:#E5484D;
+  --warn:#B7791F;
+  --warn-soft:#FBF0DC;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--sans);
+  background:var(--bg);
+  color:var(--ink);
+  min-height:100vh;
+  padding-bottom:calc(84px + env(safe-area-inset-bottom));
+}
+
+/* ── header ── */
+header{
+  background:var(--ink);
+  color:#fff;
+  padding:calc(14px + env(safe-area-inset-top)) 16px 0;
+  position:sticky;top:0;z-index:10;
+}
+.hd-row{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:12px}
+.hd-title{font-size:17px;font-weight:700;letter-spacing:.04em}
+.hd-title small{display:block;font-size:10px;font-weight:400;color:#9AA5B1;letter-spacing:.12em;margin-top:2px}
+.hd-count{font-family:var(--mono);font-size:26px;font-weight:700;line-height:1}
+.hd-count small{font-size:10px;font-family:var(--sans);font-weight:400;color:#9AA5B1;margin-left:3px}
+/* barcode stripe motif */
+.stripe{
+  height:5px;
+  background:repeating-linear-gradient(90deg,
+    #fff 0 2px, transparent 2px 5px,
+    #fff 5px 9px, transparent 9px 12px,
+    #fff 12px 14px, transparent 14px 20px,
+    #fff 20px 27px, transparent 27px 30px);
+  opacity:.35;
+}
+
+/* ── scan window ── */
+.scanbox{
+  margin:14px 14px 10px;
+  background:var(--surface);
+  border:1.5px solid var(--line);
+  border-radius:12px;
+  padding:14px;
+  position:relative;
+  overflow:hidden;
+  transition:border-color .2s, box-shadow .2s;
+}
+.scanbox.armed{border-color:var(--ink);box-shadow:0 2px 10px rgba(27,36,48,.10)}
+.scanbox.flash-ok{border-color:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.scanbox label{
+  font-size:11px;color:var(--muted);letter-spacing:.08em;font-weight:600;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.scanbox label .st{font-weight:400}
+.scanbox label .st.on{color:var(--ok);font-weight:600}
+#scan{
+  width:100%;
+  border:0;outline:0;
+  font-family:var(--mono);
+  font-size:22px;
+  padding:8px 0 2px;
+  background:transparent;
+  color:var(--ink);
+  caret-color:var(--laser);
+}
+#scan::placeholder{color:#C4CBD3;font-size:16px;font-family:var(--sans)}
+/* laser sweep — the one indulgence */
+.laser{
+  position:absolute;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--laser) 20%,var(--laser) 80%,transparent);
+  opacity:0;top:50%;
+  pointer-events:none;
+}
+.scanbox.armed .laser{opacity:.55;animation:sweep 2.2s ease-in-out infinite}
+@keyframes sweep{0%,100%{top:26%}50%{top:78%}}
+@media (prefers-reduced-motion:reduce){
+  .scanbox.armed .laser{animation:none;top:50%;opacity:.3}
+  .row-new{animation:none !important}
+}
+
+/* ── 作業情報(場所・担当) ── */
+.sess{display:flex;gap:8px;margin:0 14px 10px}
+.sess .f{
+  flex:1;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;padding:7px 11px;
+}
+.sess label{font-size:10px;color:var(--muted);letter-spacing:.05em;display:block}
+.sess input{
+  width:100%;border:0;outline:0;background:transparent;
+  font-family:var(--sans);font-size:14px;font-weight:600;color:var(--ink);
+  padding:2px 0 0;
+}
+.sess input::placeholder{color:#C4CBD3;font-weight:400}
+
+/* ── stats ── */
+.stats{display:flex;gap:8px;margin:0 14px 12px}
+.stat{
+  flex:1;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;padding:9px 11px;
+}
+.stat b{display:block;font-family:var(--mono);font-size:18px;font-weight:700}
+.stat span{font-size:10px;color:var(--muted);letter-spacing:.05em}
+
+/* ── list ── */
+.listwrap{margin:0 14px}
+.list-head{
+  display:flex;justify-content:space-between;align-items:baseline;
+  padding:2px 2px 8px;font-size:11px;color:var(--muted);letter-spacing:.08em;font-weight:600;
+}
+ul{list-style:none}
+.row{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+  margin-bottom:7px;
+  display:flex;align-items:center;gap:10px;
+}
+.row-new{animation:pop .35s ease}
+@keyframes pop{0%{transform:translateY(-6px);opacity:0}100%{transform:none;opacity:1}}
+.row.hit{background:var(--ok-soft);border-color:var(--ok)}
+.r-main{flex:1;min-width:0}
+.r-code{font-family:var(--mono);font-size:15px;font-weight:600;word-break:break-all}
+.r-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.badge{
+  font-size:10px;font-weight:700;letter-spacing:.05em;
+  padding:2px 7px;border-radius:99px;white-space:nowrap;
+}
+.badge.jan{background:var(--ok-soft);color:var(--ok)}
+.badge.code{background:#EAEDF1;color:var(--muted)}
+.badge.dup{background:var(--warn-soft);color:var(--warn)}
+.r-qty{font-family:var(--mono);font-size:17px;font-weight:700;min-width:34px;text-align:right}
+.r-qty small{font-size:10px;font-weight:400;color:var(--muted)}
+.empty{
+  text-align:center;color:var(--muted);font-size:13px;
+  padding:36px 16px;background:var(--surface);border:1px dashed var(--line);border-radius:10px;
+}
+
+/* ── camera scan ── */
+.scanline{display:flex;align-items:center;gap:8px}
+.cam-btn{
+  flex:0 0 auto;font-size:19px;line-height:1;
+  padding:8px 12px;border:1px solid var(--line);border-radius:9px;
+  background:var(--surface);
+}
+#cam-overlay{
+  position:fixed;inset:0;background:#000;z-index:50;
+  display:none;flex-direction:column;
+}
+#cam-overlay.open{display:flex}
+.cam-stage{flex:1;position:relative;overflow:hidden}
+#cam-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cam-frame{
+  position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);
+  width:min(78vw,340px);height:34vh;max-height:230px;
+  border-radius:14px;
+  box-shadow:0 0 0 100vmax rgba(0,0,0,.45);
+  transition:box-shadow .15s;
+}
+.cam-frame.ok{box-shadow:0 0 0 100vmax rgba(0,0,0,.45), inset 0 0 0 3px var(--ok)}
+.cam-frame i{
+  position:absolute;width:26px;height:26px;
+  border:3px solid #fff;border-radius:4px;
+}
+.cam-frame i.tl{top:-2px;left:-2px;border-right:0;border-bottom:0}
+.cam-frame i.tr{top:-2px;right:-2px;border-left:0;border-bottom:0}
+.cam-frame i.bl{bottom:-2px;left:-2px;border-right:0;border-top:0}
+.cam-frame i.br{bottom:-2px;right:-2px;border-left:0;border-top:0}
+.cam-laser{
+  position:absolute;left:8%;right:8%;height:2px;top:50%;
+  background:linear-gradient(90deg,transparent,var(--laser) 15%,var(--laser) 85%,transparent);
+  animation:camsweep 2s ease-in-out infinite;
+}
+@keyframes camsweep{0%,100%{top:18%}50%{top:82%}}
+@media (prefers-reduced-motion:reduce){.cam-laser{animation:none;top:50%}}
+.cam-bar{
+  display:flex;align-items:center;gap:12px;
+  padding:14px 16px calc(14px + env(safe-area-inset-bottom));
+  background:#111;
+}
+.cam-bar span{flex:1;color:#fff;font-size:13px}
+.cam-bar button{flex:0 0 auto;padding:11px 22px;background:#2A2F38;color:#fff;border-color:#3A404A}
+
+/* ── 数量入力モーダル ── */
+.qty-toggle{
+  font-size:10px;font-weight:700;letter-spacing:.04em;
+  padding:2px 8px;border-radius:99px;margin-left:6px;
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  flex:none;
+}
+.qty-toggle.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+#qty-modal{
+  position:fixed;inset:0;z-index:999;display:none;
+  align-items:flex-end;justify-content:center;
+  background:rgba(15,20,28,.55);
+}
+#qty-modal.open{display:flex}
+.qm-card{
+  width:100%;max-width:430px;
+  background:var(--surface);
+  border-radius:18px 18px 0 0;
+  padding:18px 16px calc(14px + env(safe-area-inset-bottom));
+}
+.qm-code{
+  font-family:var(--mono);font-size:15px;font-weight:600;
+  word-break:break-all;text-align:center;
+}
+.qm-label{font-size:11px;color:var(--muted);text-align:center;margin-top:2px}
+.qm-num{
+  font-family:var(--mono);font-size:44px;font-weight:700;
+  text-align:center;padding:6px 0 12px;line-height:1.1;
+}
+.qm-num small{font-size:14px;font-weight:400;color:var(--muted)}
+.qm-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.qm-pad button{
+  font-family:var(--mono);font-size:22px;font-weight:600;
+  padding:13px 0;flex:none;
+}
+.qm-pad button.fn{font-family:var(--sans);font-size:14px;font-weight:600;color:var(--muted)}
+.qm-actions{display:flex;gap:8px;margin-top:10px}
+.qm-actions button{padding:14px 0;font-size:15px}
+
+/* ── footer actions ── */
+footer{
+  position:fixed;left:0;right:0;bottom:0;
+  background:rgba(237,240,243,.92);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  border-top:1px solid var(--line);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  display:flex;gap:8px;
+}
+button{
+  font-family:var(--sans);font-size:13px;font-weight:600;
+  border:1px solid var(--line);border-radius:10px;
+  background:var(--surface);color:var(--ink);
+  padding:11px 0;flex:1;
+  -webkit-tap-highlight-color:transparent;
+}
+button:active{transform:scale(.97)}
+button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+button.ghost{flex:0 0 52px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hd-row">
+    <div class="hd-title">SCAN LOG<small>バーコード読取・蓄積(実運用版)</small></div>
+    <div class="hd-count"><span id="total">0</span><small>件</small></div>
+  </div>
+  <div class="stripe"></div>
+</header>
+
+<div class="scanbox" id="scanbox">
+  <label><span style="display:flex;align-items:center">スキャン入力<button type="button" class="qty-toggle on" id="btn-qty-mode">数量入力 ON</button></span> <span class="st" id="stat-msg">リーダー待機中…</span></label>
+  <div class="scanline">
+    <input id="scan" type="text" inputmode="none" autocomplete="off" autocorrect="off" autocapitalize="off"
+           spellcheck="false" placeholder="バーコードを読み取ってください" enterkeyhint="done">
+    <button type="button" class="cam-btn" id="btn-kbd" aria-label="手入力キーボードの切替">⌨️</button>
+    <button type="button" class="cam-btn" id="btn-cam" aria-label="カメラで読み取る">📷</button>
+  </div>
+  <div class="laser"></div>
+</div>
+
+<div class="sess">
+  <div class="f"><label>場所</label><input id="f-loc" type="text" placeholder="例: 第2倉庫" autocomplete="off"></div>
+  <div class="f"><label>担当</label><input id="f-op" type="text" placeholder="例: 山田" autocomplete="off"></div>
+</div>
+
+<div class="stats">
+  <div class="stat"><b id="s-uniq">0</b><span>品目数</span></div>
+  <div class="stat"><b id="s-total">0</b><span>読取合計</span></div>
+  <div class="stat"><b id="s-last">--:--:--</b><span>最終読取</span></div>
+</div>
+
+<div class="listwrap">
+  <div class="list-head"><span>読取履歴</span><span>新しい順</span></div>
+  <ul id="list"></ul>
+  <div class="empty" id="empty" hidden>読取データはありません。<br>スキャンすると自動保存されます（アプリを閉じても消えません）。</div>
+</div>
+
+<footer>
+  <button class="ghost" id="btn-sound" aria-label="読取音の切替">🔊</button>
+  <button class="primary" id="btn-csv">CSV書き出し</button>
+  <button id="btn-clear">クリア</button>
+</footer>
+
+<div id="qty-modal">
+  <div class="qm-card">
+    <div class="qm-code" id="qm-code">4901234567894</div>
+    <div class="qm-label">数量を入力してください</div>
+    <div class="qm-num"><span id="qm-num">1</span><small> 点</small></div>
+    <div class="qm-pad" id="qm-pad">
+      <button>1</button><button>2</button><button>3</button>
+      <button>4</button><button>5</button><button>6</button>
+      <button>7</button><button>8</button><button>9</button>
+      <button class="fn" data-k="C">クリア</button><button>0</button><button class="fn" data-k="B">⌫</button>
+    </div>
+    <div class="qm-actions">
+      <button type="button" id="qm-cancel">キャンセル</button>
+      <button type="button" class="primary" id="qm-ok">確定して次へ</button>
+    </div>
+  </div>
+</div>
+
+<div id="cam-overlay">
+  <div class="cam-stage">
+    <video id="cam-video" autoplay muted playsinline></video>
+    <div class="cam-frame" id="cam-frame">
+      <i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+      <div class="cam-laser"></div>
+    </div>
+  </div>
+  <div class="cam-bar">
+    <span id="cam-msg">バーコードを枠内にかざしてください</span>
+    <span id="cam-ver" style="color:#6B7480;font-size:11px;font-family:ui-monospace,monospace">o1</span>
+    <button type="button" id="btn-cam-close">閉じる</button>
+  </div>
+</div>
+
+<script src="./zxing.min.js"></script>
+<script>
+"use strict";
+/* ========== 設定 ========== */
+const SOUND_DEFAULT = true;
+
+/* ========== 状態 ========== */
+let items = [];          // {code, type, qty, time}
+let soundOn = SOUND_DEFAULT;
+let audioCtx = null;
+
+const $ = id => document.getElementById(id);
+const input = $("scan"), box = $("scanbox"), list = $("list");
+
+/* ========== 端末内ストレージ(IndexedDB) ==========
+   スキャンのたびに全件を保存。ページを閉じても・電池が切れても消えない */
+const DB_NAME = "scanlog-ops";
+function idb(){
+  return new Promise((res, rej)=>{
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore("kv");
+    r.onsuccess = ()=> res(r.result);
+    r.onerror   = ()=> rej(r.error);
+  });
+}
+async function kvSet(key, val){
+  const d = await idb();
+  return new Promise((res, rej)=>{
+    const t = d.transaction("kv","readwrite");
+    t.objectStore("kv").put(val, key);
+    t.oncomplete = res; t.onerror = ()=> rej(t.error);
+  });
+}
+async function kvGet(key){
+  const d = await idb();
+  return new Promise((res, rej)=>{
+    const q = d.transaction("kv","readonly").objectStore("kv").get(key);
+    q.onsuccess = ()=> res(q.result); q.onerror = ()=> rej(q.error);
+  });
+}
+function persist(){ kvSet("items", items).catch(()=>{}); }
+function persistSession(){
+  kvSet("session", {loc: $("f-loc").value, op: $("f-op").value}).catch(()=>{});
+}
+
+/* ========== JAN/EAN チェックディジット検証 ========== */
+function codeType(s){
+  if(/^\d{13}$/.test(s) || /^\d{8}$/.test(s)){
+    const d = s.split("").map(Number);
+    const chk = d.pop();
+    let sum = 0;
+    // 右端(チェックディジット直前)から 3,1,3,1… の重み
+    d.reverse().forEach((n,i)=> sum += n * (i%2===0 ? 3 : 1));
+    if((10 - sum%10) % 10 === chk) return s.length===13 ? "JAN-13" : "JAN-8";
+  }
+  return "CODE";
+}
+
+/* ========== 読取音（外部ファイル不要のビープ） ========== */
+function beep(){
+  if(!soundOn) return;
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type="square"; o.frequency.value=1760;
+    g.gain.setValueAtTime(.12, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.001, audioCtx.currentTime+.09);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime+.09);
+  }catch(e){}
+}
+
+/* ========== 表示 ========== */
+function nowStr(){
+  const d=new Date(), p=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function timePart(t){ return (t||"").split(" ")[1] || t || "--:--:--"; }
+function render(newIdx = -1, isDup = false){
+  list.innerHTML = "";
+  items.forEach((it,i)=>{
+    const li=document.createElement("li");
+    li.className="row"+(i===newIdx?(isDup?" row-new hit":" row-new"):"");
+    li.innerHTML =
+      `<div class="r-main">
+         <div class="r-code">${esc(it.code)}</div>
+         <div class="r-meta">最終読取 ${it.time}</div>
+       </div>
+       <span class="badge ${it.type.startsWith("JAN")?"jan":"code"}">${it.type}</span>`
+      +(i===newIdx && isDup ? `<span class="badge dup">重複+1</span>` : "")
+      +`<div class="r-qty">${it.qty}<small> 点</small></div>`;
+    list.appendChild(li);
+  });
+  $("empty").hidden = items.length>0;
+  const total = items.reduce((a,b)=>a+b.qty,0);
+  $("total").textContent = total;
+  $("s-total").textContent = total;
+  $("s-uniq").textContent = items.length;
+}
+function esc(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+
+/* ========== 読取コミット ========== */
+function addItem(code, qty){
+  const time = nowStr();
+  const idx = items.findIndex(it=>it.code===code);
+  let isDup = false, newIdx = 0;
+
+  if(idx >= 0){
+    const it = items.splice(idx,1)[0];
+    it.qty += qty; it.time = time;
+    items.unshift(it);
+    isDup = true;
+  }else{
+    items.unshift({code, type:codeType(code), qty, time});
+  }
+  render(newIdx, isDup);
+  persist(); // 読取のたびに端末内へ自動保存
+  $("s-last").textContent = timePart(time);
+
+  box.classList.add("flash-ok");
+  $("stat-msg").textContent = isDup ? `読取OK（数量+${qty}）` : "読取OK（新規登録）";
+  $("stat-msg").classList.add("on");
+  setTimeout(()=>{
+    box.classList.remove("flash-ok");
+    $("stat-msg").textContent = "リーダー待機中…";
+    $("stat-msg").classList.remove("on");
+  }, 900);
+
+  input.value = "";
+  if(!camActive && !qtyOpen) input.focus();
+}
+
+function handleScan(raw){
+  const code = raw.trim();
+  if(!code) return;
+  beep();
+  if(qtyMode){ openQty(code); }
+  else{ addItem(code, 1); }
+}
+
+/* ========== 数量入力モーダル ========== */
+let qtyMode = true, qtyOpen = false, qtyCode = "", qtyVal = "";
+const qtyModal = $("qty-modal");
+
+function qtyRender(){ $("qm-num").textContent = qtyVal === "" ? "1" : qtyVal; }
+
+function openQty(code){
+  qtyOpen = true; qtyCode = code; qtyVal = "";
+  $("qm-code").textContent = code;
+  qtyRender();
+  qtyModal.classList.add("open");
+  qtyModal.style.display = "flex"; // クラス切替に加えて直接指定(表示の確実性を優先)
+  input.value = "";
+  input.blur();
+}
+function closeQty(){
+  qtyOpen = false;
+  qtyModal.classList.remove("open");
+  qtyModal.style.display = "";
+  /* 同一コードの即時再読取(再ポップアップ)を防ぐ */
+  lastScan = {code: qtyCode, t: Date.now()};
+  if(!camActive) input.focus();
+}
+function qtyKey(k){
+  if(k >= "0" && k <= "9"){
+    if(qtyVal === "" && k === "0") return;      // 先頭ゼロは無視
+    if(qtyVal.length < 4) qtyVal += k;          // 最大9999
+  }
+  else if(k === "C") qtyVal = "";
+  else if(k === "B") qtyVal = qtyVal.slice(0, -1);
+  qtyRender();
+}
+function qtyConfirm(){
+  const q = Math.max(1, parseInt(qtyVal || "1", 10));
+  closeQty();
+  addItem(qtyCode, q);
+}
+
+$("qm-pad").addEventListener("click", e=>{
+  const b = e.target.closest("button");
+  if(b) qtyKey(b.dataset.k || b.textContent);
+});
+$("qm-ok").addEventListener("click", qtyConfirm);
+$("qm-cancel").addEventListener("click", closeQty);
+$("btn-qty-mode").addEventListener("click", function(){
+  qtyMode = !qtyMode;
+  this.classList.toggle("on", qtyMode);
+  this.textContent = "数量入力 " + (qtyMode ? "ON" : "OFF");
+  if(!camActive) input.focus();
+});
+
+/* ========== カメラ読取（ZXingローカル同梱・オフライン動作） ========== */
+let camActive = false, camStream = null, camTimer = null, lastScan = {code:"", t:0};
+let coreReader = null;
+const overlay = $("cam-overlay"), camVideo = $("cam-video"),
+      camFrame = $("cam-frame"), camMsg = $("cam-msg"), camVer = $("cam-ver");
+const camCanvas = document.createElement("canvas");
+const camCtx = camCanvas.getContext("2d", {willReadFrequently:true});
+
+function onDecoded(text){
+  const now = Date.now();
+  if(text === lastScan.code && now - lastScan.t < 2500) return; // 同一コード連射防止
+  if(now - lastScan.t < 600) return;                            // 読取間クールダウン
+  lastScan = {code:text, t:now};
+  handleScan(text);
+  camMsg.textContent = "読取OK: " + text;
+  camFrame.classList.add("ok");
+  setTimeout(()=>{
+    camFrame.classList.remove("ok");
+    if(camActive) camMsg.textContent = "15〜20cm離してかざしてください";
+  }, 800);
+}
+
+function makeReader(){
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.QR_CODE
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  const r = new ZXing.MultiFormatReader();
+  r.setHints(hints);
+  return r;
+}
+
+/* 読取枠に相当する中央帯だけを切り出して解析
+   → バーコードが解析画像の大部分を占め、1Dの読取率が大きく上がる
+   輝度変換はライブラリ任せにせず自前で行う(検証済みのRGBLuminanceSource経路) */
+let frameCount = 0, camErrShown = false;
+function decodeFrame(){
+  if(!camActive || qtyOpen || camVideo.readyState < 2) return; // 数量入力中は解析一時停止
+  const vw = camVideo.videoWidth, vh = camVideo.videoHeight;
+  if(!vw || !vh) return;
+
+  try{
+    const sw = Math.round(vw * 0.86);   // 中央 86% 幅
+    const sh = Math.round(vh * 0.44);   // 中央 44% 高さ（ガイド枠相当）
+    const scale = Math.min(1, 1100 / sw); // 解析負荷を抑えるため横1100pxに制限
+    const cw = Math.round(sw * scale), ch = Math.round(sh * scale);
+    camCanvas.width = cw; camCanvas.height = ch;
+    camCtx.drawImage(camVideo, (vw-sw)/2, (vh-sh)/2, sw, sh, 0, 0, cw, ch);
+
+    const px = camCtx.getImageData(0, 0, cw, ch).data;
+    const lum = new Uint8ClampedArray(cw * ch);
+    for(let i = 0, n = cw * ch; i < n; i++){
+      lum[i] = (px[i*4]*77 + px[i*4+1]*151 + px[i*4+2]*28) >> 8;
+    }
+    const src = new ZXing.RGBLuminanceSource(lum, cw, ch);
+    const bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(src));
+    const res = coreReader.decodeWithState(bmp); // setHints済みの状態を保持する正規API
+    if(res) onDecoded(res.getText());
+  }catch(e){
+    if(e instanceof ZXing.NotFoundException ||
+       e instanceof ZXing.FormatException ||
+       e instanceof ZXing.ChecksumException){
+      /* このフレームでは未検出。正常 */
+    }else if(!camErrShown){
+      camErrShown = true; // 本物のエラーは隠さず表示する
+      camMsg.textContent = "解析エラー: " + (e && (e.message || e.constructor.name));
+    }
+  }
+
+  /* 生存確認カウンタ: 解析ループが回っていること・v4であることの目印 */
+  if(++frameCount % 8 === 0) camVer.textContent = "o1·" + frameCount;
+}
+
+async function openCam(){
+  overlay.classList.add("open");
+  camActive = true;
+  camMsg.textContent = "カメラ起動中…";
+  try{
+    coreReader = coreReader || makeReader();
+    camStream = await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{ facingMode:{ideal:"environment"},
+              width:{ideal:1920}, height:{ideal:1080} }
+    });
+    camVideo.srcObject = camStream;
+    await camVideo.play();
+
+    /* 対応端末では2倍ズーム: 物理的に離れたままバーコードを大きく写せるので
+       最短撮影距離によるピンボケ問題がほぼ消える */
+    try{
+      const track = camStream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : null;
+      if(caps && caps.zoom){
+        const z = Math.min(2, caps.zoom.max || 2);
+        await track.applyConstraints({advanced:[{zoom:z}]});
+      }
+    }catch(e){ /* ズーム非対応でも読取は継続 */ }
+
+    camTimer = setInterval(decodeFrame, 130);
+    camMsg.textContent = "15〜20cm離してかざしてください";
+  }catch(err){
+    closeCam();
+    alert(err && err.name === "NotAllowedError"
+      ? "カメラへのアクセスが許可されていません。iPhoneの設定 > Safari(またはこのアプリ) > カメラ で許可してください。"
+      : "カメラを起動できませんでした: " + (err && err.message || err));
+  }
+}
+
+function closeCam(){
+  camActive = false;
+  overlay.classList.remove("open");
+  if(camTimer){ clearInterval(camTimer); camTimer = null; }
+  if(camStream){
+    camStream.getTracks().forEach(t=>t.stop());
+    camStream = null;
+  }
+  camVideo.srcObject = null;
+  input.focus();
+}
+
+$("btn-cam").addEventListener("click", openCam);
+$("btn-cam-close").addEventListener("click", closeCam);
+
+/* ========== 手入力キーボードの切替 ==========
+   通常は inputmode="none" でソフトキーボードを抑止(HIDリーダー入力は通る)。
+   ⌨️で手打ちしたい時だけキーボードを呼び出せる */
+let kbdOn = false;
+$("btn-kbd").addEventListener("click", function(){
+  kbdOn = !kbdOn;
+  this.style.background = kbdOn ? "#D8DDE3" : "";
+  if(kbdOn){
+    /* iOSはユーザー操作と同一処理内のfocusでしかキーボードを出さないため、
+       一時inputに先にフォーカスして「キーボード表示権」を確保してから本命へ移す */
+    const tmp = document.createElement("input");
+    tmp.type = "text";
+    tmp.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0";
+    document.body.appendChild(tmp);
+    tmp.focus();
+    setTimeout(()=>{
+      input.setAttribute("inputmode", "text");
+      input.focus();
+      tmp.remove();
+    }, 80);
+  }else{
+    input.setAttribute("inputmode", "none");
+    input.blur();
+    setTimeout(()=> input.focus(), 80); // キーボードを畳んでからスキャン待機フォーカスに戻す
+  }
+});
+
+/* ========== 入力イベント（HIDリーダー＝キーボード入力＋Enter） ========== */
+input.addEventListener("keydown", e=>{
+  if(qtyOpen){ // モーダル表示中の入力は数量側へルーティング(スキャンのEnterで即confirmされる事故を防ぐ)
+    e.preventDefault(); e.stopPropagation();
+    if(e.key === "Enter") qtyConfirm();
+    else if(e.key >= "0" && e.key <= "9") qtyKey(e.key);
+    else if(e.key === "Backspace") qtyKey("B");
+    return;
+  }
+  if(e.key === "Enter"){
+    e.preventDefault();
+    e.stopPropagation(); // documentのEnterハンドラ(数量確定)に同じイベントが届くのを止める
+    handleScan(input.value);
+  }
+});
+input.addEventListener("focus", ()=> box.classList.add("armed"));
+input.addEventListener("blur",  ()=> box.classList.remove("armed"));
+
+/* フォーカスが外れていてもリーダー入力を拾って戻す保険
+   数量入力中はハードキー(外付けテンキー等)を数量にルーティング */
+document.addEventListener("keydown", e=>{
+  if(qtyOpen){
+    if(e.key >= "0" && e.key <= "9"){ qtyKey(e.key); e.preventDefault(); }
+    else if(e.key === "Backspace"){ qtyKey("B"); e.preventDefault(); }
+    else if(e.key === "Enter"){ qtyConfirm(); e.preventDefault(); }
+    else if(e.key === "Escape"){ closeQty(); e.preventDefault(); }
+    return;
+  }
+  if(document.activeElement !== input && e.key.length === 1){ input.focus(); }
+});
+box.addEventListener("click", ()=> input.focus());
+
+/* ========== CSV書き出し（UTF-8 BOM付き / Excel対応） ========== */
+$("btn-csv").addEventListener("click", ()=>{
+  if(items.length===0){ alert("書き出すデータがありません。"); return; }
+  const loc = $("f-loc").value.trim(), op = $("f-op").value.trim();
+  const rows = [["コード","種別","数量","最終読取日時","場所","担当"]]
+    .concat(items.map(it=>[it.code,it.type,it.qty,it.time,loc,op]));
+  const csv = "\uFEFF"+rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  const d = new Date(), p=n=>String(n).padStart(2,"0");
+  const locTag = loc ? "_"+loc.replace(/[\\/:*?"<>|\s]/g,"") : "";
+  a.download = `scanlog${locTag}_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  /* 「溜める→吐く→リセット」の運用サイクル */
+  setTimeout(()=>{
+    if(confirm("CSVを書き出しました。読取データをクリアして次の作業に移りますか？")){
+      items = []; render(); persist(); $("s-last").textContent="--:--:--";
+    }
+  }, 400);
+});
+
+/* ========== クリア / 音 ========== */
+$("btn-clear").addEventListener("click", ()=>{
+  if(items.length && confirm("読取データをすべてクリアします。よろしいですか？")){
+    items = []; render(); persist(); $("s-last").textContent="--:--:--";
+  }
+  input.focus();
+});
+$("btn-sound").addEventListener("click", function(){
+  soundOn = !soundOn;
+  this.textContent = soundOn ? "🔊" : "🔇";
+  input.focus();
+});
+
+/* ========== 初期化: 端末内に保存済みのデータを復元 ========== */
+$("f-loc").addEventListener("change", persistSession);
+$("f-op").addEventListener("change", persistSession);
+(async ()=>{
+  try{
+    const saved = await kvGet("items");
+    if(Array.isArray(saved) && saved.length) items = saved;
+    const sess = await kvGet("session");
+    if(sess){ $("f-loc").value = sess.loc || ""; $("f-op").value = sess.op || ""; }
+  }catch(e){ /* 復元失敗時は空から開始 */ }
+  render();
+  if(items.length) $("s-last").textContent = timePart(items[0].time);
+  input.focus();
+})();
+
+/* ========== PWA: Service Worker登録（オフライン動作用） ========== */
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("./sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
